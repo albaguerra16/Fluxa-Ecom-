@@ -25,6 +25,7 @@ Flags:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 import time
@@ -71,15 +72,21 @@ def etapa_triangular(keyword: str, dry_run: bool) -> "ProductScore":  # type: ig
     from trendia.triangulator.mercadolibre import buscar
     from trendia.triangulator.trends import interes_colombia
     from trendia.triangulator.scorer import puntuar, ProductScore
+    from trendia.triangulator.meta_ads import _scrape_async as _meta_async, MetaAdsResultado
+    from trendia.triangulator.fb_marketplace import _scrape_async as _mkt_async, MarketplaceResultado
 
     if dry_run:
         from trendia.triangulator.mercadolibre import MLResultado
         from trendia.triangulator.trends import TrendsResultado
         ml = MLResultado(keyword, total_productos=1500, num_marcas=20, dominios=["MCO-BODY_SHAPERS"])
         tr = TrendsResultado(keyword, interes_promedio=55.0, interes_peak=100, tendencia=0.8, semanas_con_datos=90)
-        score = puntuar(ml, tr)
-        print(f"  [dry-run] ML simulado: {ml}")
-        print(f"  [dry-run] Trends simulado: {tr}")
+        meta = MetaAdsResultado(keyword=keyword, num_anuncios=12)
+        mkt = MarketplaceResultado(keyword=keyword, num_publicaciones=18)
+        score = puntuar(ml, tr, meta_ads=meta, marketplace=mkt)
+        print(f"  [dry-run] ML:          {ml}")
+        print(f"  [dry-run] Trends:      {tr}")
+        print(f"  [dry-run] Meta Ads:    {meta}")
+        print(f"  [dry-run] Marketplace: {mkt}")
         return score
 
     t0 = time.monotonic()
@@ -91,7 +98,17 @@ def etapa_triangular(keyword: str, dry_run: bool) -> "ProductScore":  # type: ig
     tr = interes_colombia(keyword)
     print(f"  {tr}")
 
-    score = puntuar(ml, tr)
+    # Scrapers sociales en paralelo (no bloquean el pipeline si fallan)
+    print("  → Scrapeando Meta Ads Library y FB Marketplace en paralelo…")
+
+    async def _scrapers_paralelo():
+        return await asyncio.gather(_meta_async(keyword), _mkt_async(keyword))
+
+    meta, mkt = asyncio.run(_scrapers_paralelo())
+    print(f"  {meta}")
+    print(f"  {mkt}")
+
+    score = puntuar(ml, tr, meta_ads=meta, marketplace=mkt)
     print(f"\n  {score}")
     print(f"  Tiempo: {time.monotonic() - t0:.1f}s")
     return score
@@ -321,6 +338,11 @@ def main() -> int:
     print(f"  Keyword:       {args.keyword}")
     print(f"  Score:         {score.score:.1f}/100 → {score.recomendacion}")
     print(f"  Recomendación: {score.razon}")
+    if score.num_meta_ads > 0 or score.num_marketplace > 0:
+        print(f"  Meta Ads CO:   {score.num_meta_ads} anuncios activos")
+        print(f"  Marketplace:   {score.num_marketplace} publicaciones")
+        if score.ajuste_social != 0:
+            print(f"  Ajuste social: {score.ajuste_social:+.1f} pts")
     if page:
         print(f"  Landing:       {page.url}")
     print(f"  Videos:        {len(lote.exitosas)}/{len(lote.variaciones)} generados")
