@@ -1,9 +1,15 @@
 """Cliente Shopify Admin REST API para publicar landing pages COD.
 
-Rate limiting: Shopify usa un bucket de 40 créditos/segundo (REST).
-Cada POST /pages.json cuesta ~2 créditos. Implementamos un rate limiter
-conservador de 2 req/s para operar lejos del límite y soportar carga concurrente
-de otras partes de la app usando la misma key.
+Autenticación: OAuth 2.0 client_credentials.
+  1. POST /admin/oauth/access_token con client_id + client_secret
+     → Shopify devuelve un access_token offline (no expira en custom apps)
+  2. Todas las llamadas Admin REST usan X-Shopify-Access-Token: {token}
+
+El token se cachea en memoria durante la vida del proceso para no repetir
+el intercambio en cada llamada. Si el token es rechazado (401) se limpia
+el caché y se reintenta el intercambio una vez.
+
+Rate limiting: bucket de 40 créditos/segundo (REST). Operamos a 2 req/s.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ _MIN_INTERVAL = 0.5  # segundos entre requests → 2 req/s
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 
 class _RateLimiter:
-    """Token bucket simple — thread-safe para uso en pipeline paralelo futuro."""
+    """Token bucket simple — thread-safe."""
 
     def __init__(self, min_interval: float = _MIN_INTERVAL) -> None:
         self._min_interval = min_interval
@@ -46,24 +52,78 @@ class _RateLimiter:
 
 _limiter = _RateLimiter()
 
+# Caché del access token OAuth en memoria
+_token_cache: dict[str, str] = {}   # clave: client_id → valor: access_token
+_token_lock = threading.Lock()
+
+
+# ── OAuth client_credentials ──────────────────────────────────────────────────
+
+def _intercambiar_credenciales(store_url: str, client_id: str, client_secret: str) -> str:
+    """
+    Intercambia Client ID + Client Secret por un access token de Shopify.
+
+    Shopify devuelve un token offline para custom apps; no expira mientras
+    la app siga instalada en la tienda.
+    """
+    endpoint = f"{_normalizar_url(store_url)}/admin/oauth/access_token"
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            endpoint,
+            json={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "client_credentials",
+            },
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    token = data.get("access_token", "")
+    if not token:
+        raise ValueError(
+            f"Shopify no retornó access_token. Respuesta: {data}"
+        )
+    return token
+
+
+def _obtener_token(store_url: str, client_id: str, client_secret: str) -> str:
+    """Retorna el access token cacheado o realiza el intercambio OAuth."""
+    with _token_lock:
+        if client_id in _token_cache:
+            return _token_cache[client_id]
+        token = _intercambiar_credenciales(store_url, client_id, client_secret)
+        _token_cache[client_id] = token
+        return token
+
+
+def _invalidar_token(client_id: str) -> None:
+    with _token_lock:
+        _token_cache.pop(client_id, None)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _slugify(text: str) -> str:
-    """Convierte un texto a handle URL-safe para Shopify (ej. 'Faja Colombiana' → 'faja-colombiana')."""
+    """Convierte texto a handle URL-safe para Shopify."""
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
     text = re.sub(r"-+", "-", text).strip("-")
-    return text[:100]  # Shopify limita handles a 255 chars; 100 es suficiente
+    return text[:100]
 
 
-def _base_url(store_url: str) -> str:
+def _normalizar_url(store_url: str) -> str:
     store_url = store_url.rstrip("/")
     if not store_url.startswith("https://"):
         store_url = f"https://{store_url}"
-    return f"{store_url}/admin/api/{_API_VERSION}"
+    return store_url
+
+
+def _base_url(store_url: str) -> str:
+    return f"{_normalizar_url(store_url)}/admin/api/{_API_VERSION}"
 
 
 def _auth_headers(token: str) -> dict[str, str]:
@@ -72,6 +132,26 @@ def _auth_headers(token: str) -> dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+
+
+def _credenciales() -> tuple[str, str, str]:
+    """Lee y valida las tres variables requeridas de .env."""
+    store_url = config("SHOPIFY_STORE_URL", default="")
+    client_id = config("SHOPIFY_CLIENT_ID", default="")
+    client_secret = config("SHOPIFY_CLIENT_SECRET", default="")
+
+    faltantes = [k for k, v in {
+        "SHOPIFY_STORE_URL": store_url,
+        "SHOPIFY_CLIENT_ID": client_id,
+        "SHOPIFY_CLIENT_SECRET": client_secret,
+    }.items() if not v]
+
+    if faltantes:
+        raise EnvironmentError(
+            f"Faltan en .env: {', '.join(faltantes)}\n"
+            "Configura SHOPIFY_STORE_URL, SHOPIFY_CLIENT_ID y SHOPIFY_CLIENT_SECRET."
+        )
+    return store_url, client_id, client_secret
 
 
 # ── Dataclass de resultado ────────────────────────────────────────────────────
@@ -92,24 +172,37 @@ class ShopifyPage:
         )
 
 
-# ── HTTP ──────────────────────────────────────────────────────────────────────
+# ── HTTP con retry y manejo de 401 ────────────────────────────────────────────
 
-@retry(
-    retry=retry_if_exception_type(httpx.HTTPStatusError),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    reraise=True,
-)
-def _post(base: str, headers: dict, payload: dict) -> dict:
-    _limiter.esperar()
-    with httpx.Client(timeout=20) as client:
-        resp = client.post(f"{base}/pages.json", json=payload, headers=headers)
+def _request_con_retry(
+    method: str,
+    url: str,
+    client_id: str,
+    store_url: str,
+    client_secret: str,
+    **kwargs,
+) -> dict:
+    """Ejecuta un request Admin REST. Si recibe 401, renueva el token y reintenta una vez."""
+    for intento in range(2):
+        _limiter.esperar()
+        token = _obtener_token(store_url, client_id, client_secret)
+        headers = _auth_headers(token)
+
+        with httpx.Client(timeout=20) as client:
+            resp = getattr(client, method)(url, headers=headers, **kwargs)
+
+        if resp.status_code == 401 and intento == 0:
+            _invalidar_token(client_id)
+            continue
+
         if resp.status_code == 429:
-            retry_after = float(resp.headers.get("Retry-After", 2))
-            time.sleep(retry_after)
+            time.sleep(float(resp.headers.get("Retry-After", 2)))
             resp.raise_for_status()
+
         resp.raise_for_status()
         return resp.json()
+
+    raise RuntimeError("No se pudo autenticar con Shopify después de renovar el token.")
 
 
 @retry(
@@ -118,26 +211,27 @@ def _post(base: str, headers: dict, payload: dict) -> dict:
     wait=wait_exponential(multiplier=1, min=2, max=10),
     reraise=True,
 )
-def _put(base: str, page_id: int, headers: dict, payload: dict) -> dict:
-    _limiter.esperar()
-    with httpx.Client(timeout=20) as client:
-        resp = client.put(f"{base}/pages/{page_id}.json", json=payload, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
+def _post(base: str, client_id: str, store_url: str, client_secret: str, payload: dict) -> dict:
+    return _request_con_retry("post", f"{base}/pages.json", client_id, store_url, client_secret, json=payload)
 
 
-def _get_by_handle(base: str, headers: dict, handle: str) -> dict | None:
-    """Busca una página existente por handle. Retorna None si no existe."""
-    _limiter.esperar()
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(
-            f"{base}/pages.json",
-            params={"handle": handle, "fields": "id,handle,title"},
-            headers=headers,
-        )
-        resp.raise_for_status()
-        pages = resp.json().get("pages", [])
-        return pages[0] if pages else None
+@retry(
+    retry=retry_if_exception_type(httpx.HTTPStatusError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
+def _put(base: str, page_id: int, client_id: str, store_url: str, client_secret: str, payload: dict) -> dict:
+    return _request_con_retry("put", f"{base}/pages/{page_id}.json", client_id, store_url, client_secret, json=payload)
+
+
+def _get_by_handle(base: str, client_id: str, store_url: str, client_secret: str, handle: str) -> dict | None:
+    result = _request_con_retry(
+        "get", f"{base}/pages.json", client_id, store_url, client_secret,
+        params={"handle": handle, "fields": "id,handle,title"},
+    )
+    pages = result.get("pages", [])
+    return pages[0] if pages else None
 
 
 # ── Función pública ───────────────────────────────────────────────────────────
@@ -150,33 +244,28 @@ def publicar(
     """
     Crea o actualiza una página en Shopify con el copy y HTML generados.
 
-    Si ya existe una página con el mismo handle (keyword slugificado), la
-    actualiza en lugar de crear un duplicado.
+    Autenticación: OAuth client_credentials (SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET).
+    El access token se obtiene automáticamente y se cachea en memoria.
+
+    Si ya existe una página con el mismo handle, la actualiza (upsert).
 
     Args:
-        copy:      LandingCopy con headline (usado como título de página).
+        copy:      LandingCopy con headline (título de página) y keyword (handle).
         landing:   LandingHTML renderizado por templates.renderizar().
-        publicada: Si True, la página queda visible de inmediato en la tienda.
+        publicada: Si True, la página queda visible de inmediato.
 
     Returns:
         ShopifyPage con id, handle, url pública y url del admin.
 
     Raises:
-        EnvironmentError: Si SHOPIFY_STORE_URL o SHOPIFY_ACCESS_TOKEN faltan en .env.
-        httpx.HTTPStatusError: Si la API de Shopify retorna un error no recuperable.
+        EnvironmentError: Si faltan variables en .env.
+        httpx.HTTPStatusError: Si la API retorna un error no recuperable.
     """
-    store_url = config("SHOPIFY_STORE_URL", default="")
-    access_token = config("SHOPIFY_ACCESS_TOKEN", default="")
-
-    if not store_url or not access_token:
-        raise EnvironmentError(
-            "Faltan SHOPIFY_STORE_URL y/o SHOPIFY_ACCESS_TOKEN en .env"
-        )
+    store_url, client_id, client_secret = _credenciales()
 
     base = _base_url(store_url)
-    headers = _auth_headers(access_token)
     handle = _slugify(copy.keyword)
-    store_domain = store_url.rstrip("/").removeprefix("https://").removeprefix("http://")
+    store_domain = _normalizar_url(store_url).removeprefix("https://")
 
     payload = {
         "page": {
@@ -187,15 +276,13 @@ def publicar(
         }
     }
 
-    # Upsert: actualizar si ya existe, crear si no
-    existing = _get_by_handle(base, headers, handle)
+    existing = _get_by_handle(base, client_id, store_url, client_secret, handle)
     if existing:
-        data = _put(base, existing["id"], headers, payload)
-        page_data = data["page"]
+        data = _put(base, existing["id"], client_id, store_url, client_secret, payload)
     else:
-        data = _post(base, headers, payload)
-        page_data = data["page"]
+        data = _post(base, client_id, store_url, client_secret, payload)
 
+    page_data = data["page"]
     page_id = page_data["id"]
 
     return ShopifyPage(

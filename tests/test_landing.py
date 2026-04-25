@@ -265,8 +265,10 @@ class TestPublicar:
 
         with patch("trendia.landing.shopify.config", side_effect=lambda k, default="": {
             "SHOPIFY_STORE_URL": "mitienda.myshopify.com",
-            "SHOPIFY_ACCESS_TOKEN": "shpat_test123",
+            "SHOPIFY_CLIENT_ID": "test_client_id",
+            "SHOPIFY_CLIENT_SECRET": "test_client_secret",
         }.get(k, default)), \
+        patch("trendia.landing.shopify._obtener_token", return_value="shpat_test123"), \
         patch("trendia.landing.shopify._get_by_handle", return_value=existing_data), \
         patch("trendia.landing.shopify._post", return_value=page_resp) as mock_post, \
         patch("trendia.landing.shopify._put", return_value=page_resp) as mock_put:

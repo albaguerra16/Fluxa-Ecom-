@@ -9,5 +9,6 @@ VIDEO_VARIATIONS: int = config("VIDEO_VARIATIONS", default=3, cast=int)
 
 ANTHROPIC_API_KEY: str = config("ANTHROPIC_API_KEY", default="")
 SHOPIFY_STORE_URL: str = config("SHOPIFY_STORE_URL", default="")
-SHOPIFY_ACCESS_TOKEN: str = config("SHOPIFY_ACCESS_TOKEN", default="")
+SHOPIFY_CLIENT_ID: str = config("SHOPIFY_CLIENT_ID", default="")
+SHOPIFY_CLIENT_SECRET: str = config("SHOPIFY_CLIENT_SECRET", default="")
 FAL_KEY: str = config("FAL_KEY", default="")
