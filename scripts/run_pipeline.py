@@ -23,12 +23,16 @@ Flags:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
 
-# Asegura que el paquete trendia sea importable desde scripts/
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ancla el cwd a la raíz del proyecto (parent de scripts/) para que
+# python-decouple encuentre .env sin importar desde dónde se llame el script.
+_PROJECT_ROOT = Path(__file__).parent.parent
+os.chdir(_PROJECT_ROOT)
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 from decouple import config
 
