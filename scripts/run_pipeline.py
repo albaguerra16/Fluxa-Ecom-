@@ -3,16 +3,18 @@
 
 Uso:
     python scripts/run_pipeline.py "faja colombiana"
-    python scripts/run_pipeline.py "faja colombiana" --variaciones 2
     python scripts/run_pipeline.py "faja colombiana" --solo-triangular
     python scripts/run_pipeline.py "faja colombiana" --imagen-url https://cdn.ejemplo.com/img.jpg
+    python scripts/run_pipeline.py "faja colombiana" --video-url https://cdn.ejemplo.com/vid.mp4
+    python scripts/run_pipeline.py "faja colombiana" --formato reels
     python scripts/run_pipeline.py "faja colombiana" --threshold 50 --no-video
     python scripts/run_pipeline.py "faja colombiana" --no-publicar
 
 Flags:
     --threshold INT      Score mínimo para continuar al landing (default: SCORE_THRESHOLD del .env)
-    --variaciones INT    Número de variaciones de video (default: VIDEO_VARIATIONS del .env)
     --imagen-url URL     URL de imagen del producto para la landing page
+    --video-url URL      URL del video original del producto (referencia para image-to-video)
+    --formato STR        Formatos de video a generar: reels | feed | ambos (default: ambos)
     --contexto STR       Info adicional para Claude (precio, USP, restricciones)
     --solo-triangular    Detiene el pipeline tras mostrar el score
     --no-publicar        Genera el HTML pero no lo sube a Shopify
@@ -159,32 +161,51 @@ def etapa_landing(
 
 def etapa_video(
     copy: "LandingCopy",  # type: ignore[name-defined]  # noqa: F821
-    n: int,
+    video_url: str,
+    formatos: list,
     dry_run: bool,
-) -> "LoteVideos":  # type: ignore[name-defined]  # noqa: F821
-    from trendia.video.variations import generar_variaciones, LoteVideos
+) -> "LoteVariaciones":  # type: ignore[name-defined]  # noqa: F821
+    from src.video_agent import Angulo, Formato, VariacionVideo, LoteVariaciones, VideoAgente
 
     if dry_run:
-        from trendia.video.fal_client import Angulo, VideoJob
-        jobs = [
-            VideoJob(a, f"[dry-run] prompt para {a.value}", video_url=f"https://fal.ai/dry-run/{a.value}.mp4")
-            for a in list(Angulo)[:n]
+        variaciones = [
+            VariacionVideo(
+                angulo=a,
+                formato=f,
+                prompt=f"[dry-run] {a.value} / {f.name}",
+                video_url=f"https://fal.ai/dry-run/{a.value}-{f.name.lower()}.mp4",
+            )
+            for a in Angulo
+            for f in formatos
         ]
-        lote = LoteVideos(keyword=copy.keyword, jobs=jobs)
-        print(f"  [dry-run] {n} variaciones simuladas")
+        lote = LoteVariaciones(keyword=copy.keyword, video_original_url=video_url, variaciones=variaciones)
+        fmt_str = " + ".join(f.name for f in formatos)
+        print(f"  [dry-run] {len(variaciones)} variaciones simuladas (3 ángulos × {fmt_str})")
         return lote
 
+    agente = VideoAgente(
+        keyword=copy.keyword,
+        headline=copy.headline,
+        cta_principal=copy.cta_principal,
+        cta_secundario=copy.cta_secundario,
+        video_original_url=video_url,
+    )
+
     t0 = time.monotonic()
-    print(f"  → Generando {n} variaciones en paralelo (fal.ai kling-video)…")
+    fmt_str = " + ".join(f.name for f in formatos)
+    n_total = 3 * len(formatos)
+    modo = "image-to-video" if video_url else "text-to-video"
+    print(f"  → Generando 3 ángulos × {len(formatos)} formatos ({fmt_str}) = {n_total} videos en paralelo")
+    print(f"  → Modelo: fal.ai kling-video ({modo})")
     print("  (esto puede tardar 2-5 minutos por video)")
-    lote = generar_variaciones(copy, n=n)
+    lote = agente.generar(formatos=formatos)
 
-    for job in lote.exitosos:
-        _ok(f"{job.angulo.value}: {job.video_url}")
-    for job in lote.fallidos:
-        _err(f"{job.angulo.value}: {job.error}")
+    for v in lote.exitosas:
+        _ok(f"{v.angulo.value} / {v.formato.name}: {v.video_url}")
+    for v in lote.fallidas:
+        _err(f"{v.angulo.value} / {v.formato.name}: {v.error}")
 
-    print(f"\n  {len(lote.exitosos)}/{len(lote.jobs)} videos generados — Tiempo: {time.monotonic() - t0:.1f}s")
+    print(f"\n  {len(lote.exitosas)}/{len(lote.variaciones)} videos generados — Tiempo: {time.monotonic() - t0:.1f}s")
     return lote
 
 
@@ -203,13 +224,14 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Score mínimo para continuar al landing (default: SCORE_THRESHOLD en .env)",
     )
-    parser.add_argument(
-        "--variaciones",
-        type=int,
-        default=None,
-        help="Número de variaciones de video (default: VIDEO_VARIATIONS en .env)",
-    )
     parser.add_argument("--imagen-url", default="", metavar="URL", help="URL de imagen del producto")
+    parser.add_argument("--video-url", default="", metavar="URL", help="URL del video original del producto (referencia image-to-video)")
+    parser.add_argument(
+        "--formato",
+        choices=["reels", "feed", "ambos"],
+        default="ambos",
+        help="Formatos de video a generar: reels (9:16) | feed (1:1) | ambos (default)",
+    )
     parser.add_argument("--contexto", default="", metavar="STR", help="Info adicional para Claude")
     parser.add_argument("--solo-triangular", action="store_true", help="Solo muestra el score y sale")
     parser.add_argument("--no-publicar", action="store_true", help="No sube la página a Shopify")
@@ -221,8 +243,11 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
 
+    from src.video_agent import Formato
+
     threshold = args.threshold or config("SCORE_THRESHOLD", default=60, cast=float)
-    n_videos = args.variaciones or config("VIDEO_VARIATIONS", default=3, cast=int)
+    _fmt_map = {"reels": [Formato.REELS], "feed": [Formato.FEED], "ambos": [Formato.REELS, Formato.FEED]}
+    formatos_video = _fmt_map[args.formato]
     total_pasos = 1 if args.solo_triangular else (2 if args.no_video else 3)
 
     print(f"\n{'═' * 60}")
@@ -280,9 +305,10 @@ def main() -> int:
         return 0
 
     # ── Etapa 3: Video ────────────────────────────────────────────────────────
-    _paso(3, total_pasos, f"VIDEO ({n_videos} variaciones — fal.ai kling-video)")
+    fmt_label = " + ".join(f.name for f in formatos_video)
+    _paso(3, total_pasos, f"VIDEO (3 ángulos × {fmt_label} — fal.ai kling-video)")
     try:
-        lote = etapa_video(copy, n_videos, args.dry_run)
+        lote = etapa_video(copy, args.video_url, formatos_video, args.dry_run)
     except EnvironmentError as exc:
         _err(str(exc))
         return 1
@@ -292,14 +318,14 @@ def main() -> int:
 
     # ── Resumen final ─────────────────────────────────────────────────────────
     _sep("RESUMEN FINAL")
-    print(f"  Keyword:      {args.keyword}")
-    print(f"  Score:        {score.score:.1f}/100 → {score.recomendacion}")
+    print(f"  Keyword:       {args.keyword}")
+    print(f"  Score:         {score.score:.1f}/100 → {score.recomendacion}")
     print(f"  Recomendación: {score.razon}")
     if page:
-        print(f"  Landing:      {page.url}")
-    print(f"  Videos:       {len(lote.exitosos)}/{len(lote.jobs)} generados")
-    for job in lote.exitosos:
-        print(f"    [{job.angulo.value}] {job.video_url}")
+        print(f"  Landing:       {page.url}")
+    print(f"  Videos:        {len(lote.exitosas)}/{len(lote.variaciones)} generados")
+    for v in lote.exitosas:
+        print(f"    [{v.angulo.value} / {v.formato.name}] {v.video_url}")
     _sep()
     return 0
 
