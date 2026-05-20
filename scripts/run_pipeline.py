@@ -120,6 +120,7 @@ def etapa_landing(
     contexto: str,
     publicar: bool,
     dry_run: bool,
+    product_handle: str = "",
 ) -> tuple["LandingCopy", "LandingHTML", "ShopifyPage | None"]:  # type: ignore[name-defined]  # noqa: F821
     from trendia.landing.generator import generar_copy, LandingCopy
     from trendia.landing.templates import renderizar, LandingHTML
@@ -137,7 +138,7 @@ def etapa_landing(
             garantia="Si no te gusta, la devuelves sin costo",
             badge_cod="Pago al recibir",
         )
-        landing = renderizar(copy, imagen_url)
+        landing = renderizar(copy, imagen_url, product_handle)
         print(f"  [dry-run] Copy generado para '{score.keyword}'")
         print(f"  [dry-run] HTML: {len(landing.html)} caracteres")
         return copy, landing, None
@@ -158,7 +159,7 @@ def etapa_landing(
     print(f"  Badge COD:   {copy.badge_cod}")
 
     print("\n  → Renderizando HTML (Jinja2)…")
-    landing = renderizar(copy, imagen_url)
+    landing = renderizar(copy, imagen_url, product_handle)
     _ok(f"HTML generado — {len(landing.html):,} caracteres")
 
     page = None
@@ -250,6 +251,12 @@ def _parse_args() -> argparse.Namespace:
         help="Formatos de video a generar: reels (9:16) | feed (1:1) | ambos (default)",
     )
     parser.add_argument("--contexto", default="", metavar="STR", help="Info adicional para Claude")
+    parser.add_argument(
+        "--product-handle",
+        default="",
+        metavar="HANDLE",
+        help="Handle del producto en Shopify para el formulario Releasit COD (ej: cepillo-masajeador)",
+    )
     parser.add_argument("--solo-triangular", action="store_true", help="Solo muestra el score y sale")
     parser.add_argument("--no-publicar", action="store_true", help="No sube la página a Shopify")
     parser.add_argument("--no-video", action="store_true", help="Omite la generación de video")
@@ -304,6 +311,7 @@ def main() -> int:
             contexto=args.contexto,
             publicar=not args.no_publicar,
             dry_run=args.dry_run,
+            product_handle=args.product_handle,
         )
     except EnvironmentError as exc:
         _err(str(exc))

@@ -20,6 +20,7 @@ Si no, usa text-to-video sin ancla visual.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Sequence
@@ -181,8 +182,10 @@ async def _generar_variacion(
 ) -> VariacionVideo:
     """Submite un job de generación de video y espera el resultado."""
     # _fal_key() lanza EnvironmentError antes del try/except para que no
-    # quede silenciado dentro de job.error
-    fal_client.api_key = _fal_key()
+    # quede silenciado dentro de job.error.
+    # El SDK lee FAL_KEY del entorno; asignamos aquí para que python-decouple
+    # (que lee .env) lo propague correctamente.
+    os.environ["FAL_KEY"] = _fal_key()
 
     variacion = VariacionVideo(angulo=angulo, formato=formato, prompt=prompt)
     model = _MODEL_IMAGE_TO_VIDEO if video_original_url else _MODEL_TEXT_TO_VIDEO

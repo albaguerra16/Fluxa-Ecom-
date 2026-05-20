@@ -17,9 +17,41 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 _BASE = "https://api.mercadolibre.com"
 _SEARCH_LIMIT = 50
 
+# Token cache: {access_token, expires_at (epoch)}
+_token_cache: dict[str, object] = {}
+
+
+def _fetch_token() -> str:
+    """Obtiene un token vía Client Credentials y lo guarda en caché."""
+    app_id = config("ML_APP_ID", default="")
+    secret = config("ML_APP_SECRET", default="")
+    if not app_id or not secret:
+        return config("MELI_ACCESS_TOKEN", default="")
+
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            f"{_BASE}/oauth/token",
+            data={"grant_type": "client_credentials", "client_id": app_id, "client_secret": secret},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    token: str = data["access_token"]
+    expires_in: int = data.get("expires_in", 21600)
+    _token_cache["access_token"] = token
+    _token_cache["expires_at"] = time.time() + expires_in - 60  # margen de 60s
+    return token
+
+
+def _get_token() -> str:
+    """Devuelve token válido; refresca si expiró o no existe."""
+    if _token_cache.get("access_token") and time.time() < float(_token_cache.get("expires_at", 0)):  # type: ignore[arg-type]
+        return str(_token_cache["access_token"])
+    return _fetch_token()
+
 
 def _auth_headers() -> dict[str, str]:
-    token = config("MELI_ACCESS_TOKEN", default="")
+    token = _get_token()
     headers = {"User-Agent": "Mozilla/5.0 (compatible; Trendia/1.0)", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -35,6 +67,10 @@ def _auth_headers() -> dict[str, str]:
 def _get(url: str, params: dict | None = None) -> dict:
     with httpx.Client(timeout=15, follow_redirects=True) as client:
         resp = client.get(url, params=params, headers=_auth_headers())
+        if resp.status_code == 401:
+            # Token expirado en vuelo: forzar refresh y reintentar una vez
+            _token_cache.clear()
+            resp = client.get(url, params=params, headers=_auth_headers())
         resp.raise_for_status()
         return resp.json()
 
