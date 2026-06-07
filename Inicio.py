@@ -60,77 +60,76 @@ def _ir(pagina: str, pid=None, pnombre=""):
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 
-_NAV_ITEMS = [
-    ("productos",   "📦", "Mis Productos",     None),
-    ("__sep__",     "",   "INVESTIGAR",         None),
-    ("validacion",  "🔍", "Validar Producto",   None),
-    ("__sep__",     "",   "CREAR",              None),
-    ("copy",        "🎯", "Copy & Ángulos",     None),
-    ("storyboards", "🎬", "Storyboards",        None),
-    ("landing",     "📄", "Landing Sections",   None),
-    ("upsells",     "🖼️", "Upsells",            None),
-    ("resenas",     "🌟", "Reseñas Visuales",   None),
-    ("__sep__",     "",   "LANZAR",             None),
-    ("lanzar",      "🚀", "Lanzar",             "Próx."),
-    ("margenes",    "💰", "Márgenes COD",       None),
+_NAV_LABELS = {
+    "productos":   "📦 Mis Productos",
+    "validacion":  "🔍 Validar Producto",
+    "copy":        "🎯 Copy & Ángulos",
+    "storyboards": "🎬 Storyboards",
+    "landing":     "📄 Landing Sections",
+    "upsells":     "🖼️ Upsells",
+    "resenas":     "🌟 Reseñas Visuales",
+    "lanzar":      "🚀 Lanzar",
+    "margenes":    "💰 Márgenes COD",
+}
+
+_NAV_GROUPS = [
+    ("", ["productos"]),
+    ("INVESTIGAR", ["validacion"]),
+    ("CREAR", ["copy", "storyboards", "landing", "upsells", "resenas"]),
+    ("LANZAR", ["lanzar", "margenes"]),
 ]
 
 with st.sidebar:
-    # Logo
     st.markdown("""
-    <div style="padding:1.8rem 1.2rem 1.4rem;display:flex;align-items:center;gap:0.5rem">
-      <span style="font-size:1.5rem;font-weight:900;color:#f0f0f8;letter-spacing:-0.04em;
-                   font-family:'Inter',sans-serif">⚡ fluxa</span>
+    <div style="padding:1.5rem 0 1rem;text-align:center">
+      <span style="font-size:1.6rem;font-weight:900;color:#f0f0f8;
+                   letter-spacing:-0.04em">⚡ fluxa</span>
     </div>
     """, unsafe_allow_html=True)
 
     pg = st.session_state.pagina
 
-    for key, icon, label, badge in _NAV_ITEMS:
-        if key == "__sep__":
+    for group_label, keys in _NAV_GROUPS:
+        if group_label:
             st.markdown(f"""
-            <div style="padding:0.9rem 1.2rem 0.3rem;font-size:0.6rem;font-weight:700;
-                        letter-spacing:0.14em;text-transform:uppercase;color:#1e1e30;
-                        font-family:'Inter',sans-serif">{label}</div>
+            <div style="padding:0.8rem 0 0.2rem 0.5rem;font-size:0.6rem;font-weight:700;
+                        letter-spacing:0.14em;text-transform:uppercase;color:#2a2a42">
+              {group_label}
+            </div>
             """, unsafe_allow_html=True)
-            continue
+        for key in keys:
+            label = _NAV_LABELS[key]
+            is_active = pg == key
+            btn_style = (
+                "background-color:#13132a;color:#a78bfa;font-weight:600;"
+                if is_active else
+                "background-color:transparent;color:#4a4a6a;"
+            )
+            st.markdown(f"""
+            <style>
+            div[data-testid="stSidebar"] div[data-testid="stButton"]
+              button[kind="secondary"]#btn_{key} {{
+                {btn_style}
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+            if st.sidebar.button(
+                label, key=f"_nav_{key}",
+                use_container_width=True,
+                type="secondary",
+            ):
+                st.session_state.pagina = key
+                st.rerun()
 
-        active_color = "#a78bfa" if pg == key else "#3a3a5a"
-        active_bg    = "rgba(124,58,237,0.08)" if pg == key else "transparent"
-        badge_html   = (f'<span style="font-size:0.6rem;color:#2a2a42;margin-left:auto">{badge}</span>'
-                        if badge else "")
-
-        # Render label visual
-        st.markdown(f"""
-        <div style="padding:0.05rem 0.4rem">
-          <div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.8rem;
-                      border-radius:10px;background:{active_bg};
-                      font-family:'Inter',sans-serif;font-size:0.875rem;
-                      font-weight:{'600' if pg == key else '500'};color:{active_color};
-                      pointer-events:none">
-            <span style="font-size:1rem">{icon}</span>
-            <span>{label}</span>
-            {badge_html}
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Botón invisible encima (clickable)
-        if st.sidebar.button(label, key=f"_nav_{key}", use_container_width=True):
-            st.session_state.pagina = key
-            st.rerun()
-
-    # Footer sidebar
+    st.markdown("<br>", unsafe_allow_html=True)
     nombre = st.session_state.get("_auth_name", "Alba Guerra")
     st.markdown(f"""
-    <div style="padding:1rem 1.2rem 0.5rem;border-top:1px solid #111120;margin-top:1rem">
-      <div style="font-size:0.75rem;font-weight:600;color:#2a2a42;
-                  font-family:'Inter',sans-serif">{nombre}</div>
-      <div style="font-size:0.7rem;color:#1a1a2e;font-family:'Inter',sans-serif">
-        albaguerra1697@gmail.com</div>
+    <div style="padding:0.8rem 0.5rem;border-top:1px solid #111120;
+                font-size:0.78rem;color:#2a2a42">
+      {nombre}
     </div>
     """, unsafe_allow_html=True)
-    if st.sidebar.button("Cerrar sesión", key="_logout"):
+    if st.sidebar.button("↩ Cerrar sesión", key="_logout", use_container_width=True):
         st.session_state["_auth_ok"] = False
         st.rerun()
 
