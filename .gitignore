@@ -1,5 +1,9 @@
 # Credenciales — nunca commitear
 .env
+.env.local
+
+# Base de datos local
+fluxa.db
 
 # Python
 __pycache__/
