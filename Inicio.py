@@ -89,6 +89,20 @@ with st.sidebar:
 
     pg = st.session_state.pagina
 
+    # Inyectar estilos activos una sola vez para todos los nav items
+    active_css = ""
+    for key in _NAV_LABELS:
+        if key == pg:
+            active_css += f"""
+            div[data-testid="stSidebar"] div[data-testid="stButton"]:has(button[key="_nav_{key}"]) button,
+            div[data-testid="stSidebar"] div.stButton:nth-of-type({list(_NAV_LABELS.keys()).index(key)+1}) button {{
+                background: #13132a !important;
+                color: #a78bfa !important;
+                font-weight: 600 !important;
+            }}"""
+    if active_css:
+        st.markdown(f"<style>{active_css}</style>", unsafe_allow_html=True)
+
     for group_label, keys in _NAV_GROUPS:
         if group_label:
             st.markdown(f"""
@@ -100,21 +114,17 @@ with st.sidebar:
         for key in keys:
             label = _NAV_LABELS[key]
             is_active = pg == key
-            btn_style = (
-                "background-color:#13132a;color:#a78bfa;font-weight:600;"
-                if is_active else
-                "background-color:transparent;color:#4a4a6a;"
-            )
-            st.markdown(f"""
-            <style>
-            div[data-testid="stSidebar"] div[data-testid="stButton"]
-              button[kind="secondary"]#btn_{key} {{
-                {btn_style}
-            }}
-            </style>
-            """, unsafe_allow_html=True)
+            if is_active:
+                st.markdown(f"""
+                <style>
+                div[data-testid="stSidebar"] div[data-testid="stButton"]:has(button[data-testid="stButton"]) + div button {{
+                  background: #13132a !important; color: #a78bfa !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
             if st.sidebar.button(
-                label, key=f"_nav_{key}",
+                ("▌ " if is_active else "  ") + label,
+                key=f"_nav_{key}",
                 use_container_width=True,
                 type="secondary",
             ):
@@ -687,55 +697,370 @@ def _pagina_copy():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PÁGINA: STORYBOARDS (próximamente full)
+# PÁGINA: STORYBOARDS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _pagina_storyboards():
+    from fluxa.storyboards import generar_storyboard, generar_storyboard_demo
+
     _page_header("🎬", "Storyboards",
-                 "8 fases · 10 ángulos · Cuadros visuales · Prompt imagen · Prompt Veo/Kling · Copy A/B/C")
+                 "8 fases · 10 ángulos · Cuadros visuales · Prompt Veo/Kling · Copy A/B/C Meta")
 
     pid, pnombre = _selector_producto("storyboards")
     if not pid:
         return
 
-    st.markdown("""
-    <div class="fx-card" style="text-align:center;padding:3rem">
-      <div style="font-size:2rem;margin-bottom:1rem">🎬</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;letter-spacing:-0.02em">
-        Storyboards completos — en construcción
-      </div>
-      <div style="font-size:0.85rem;color:#3a3a5a;margin-top:0.5rem">
-        8 fases · 10 ángulos ordenados por conversión · Cuadros con personajes y planos<br>
-        Prompt imagen hiperrealista · Prompt Veo/Gemini Omni/Kling · 3 copies A/B/C Meta
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    hist = [s for s in db.listar(limite=300)
+            if s["producto"] == pnombre and s["modulo"] == "storyboard"]
+    datos_prev = hist[0]["datos"] if hist else None
+
+    c1, c2, c3 = st.columns([3, 2, 1], gap="small")
+    with c1:
+        demo = st.checkbox("Modo demo (sin API)", value=False)
+    with c2:
+        contexto = st.text_input("Contexto extra (opcional)", placeholder="precio, público, diferenciador…",
+                                 label_visibility="collapsed")
+    with c3:
+        gen_btn = st.button("⚡ Generar", type="primary")
+
+    if gen_btn:
+        with st.status(f"Director Creativo analizando **{pnombre}**…", expanded=True) as status:
+            try:
+                st.write("🎬 Fase 1-2: Analizando producto y generando 10 ángulos…")
+                st.write("🎯 Fase 3-4: Seleccionando mejor ángulo y construyendo storyboard…")
+                st.write("🎥 Fase 5-8: Cuadros visuales, prompts Veo/Kling y copies Meta A/B/C…")
+                res = generar_storyboard_demo(pnombre) if demo else generar_storyboard(pnombre, contexto)
+                datos_g = {
+                    "producto": res.producto,
+                    "mejor_angulo": {"numero": res.mejor_angulo.numero, "nombre": res.mejor_angulo.nombre,
+                                     "descripcion": res.mejor_angulo.descripcion, "potencial": res.mejor_angulo.potencial},
+                    "angulo_razon": res.angulo_razon,
+                    "angulos_todos": [{"numero": a.numero, "nombre": a.nombre,
+                                       "descripcion": a.descripcion, "potencial": a.potencial}
+                                      for a in res.angulos_todos],
+                    "cuadros": [{"escena": c.escena, "tiempo": c.tiempo, "objetivo": c.objetivo,
+                                 "visual": c.visual, "texto": c.texto,
+                                 "descripcion_cuadro": c.descripcion_cuadro}
+                                for c in res.cuadros],
+                    "prompt_imagen": res.prompt_imagen,
+                    "prompt_veo": res.prompt_veo,
+                    "copy_a": res.copy_a, "copy_b": res.copy_b, "copy_c": res.copy_c,
+                    "titulo_meta": res.titulo_meta, "descripcion_meta": res.descripcion_meta,
+                    "cta_meta": res.cta_meta,
+                    "tokens_entrada": res.tokens_entrada, "tokens_salida": res.tokens_salida,
+                }
+                for s in hist:
+                    db.eliminar(s["id"])
+                db.guardar(pnombre, "storyboard", datos_g)
+                status.update(label="¡Storyboard listo!", state="complete", expanded=False)
+                st.session_state["story_cache"] = datos_g
+                st.rerun()
+            except Exception as e:
+                status.update(label=f"Error: {e}", state="error")
+                st.error(str(e))
+        return
+
+    datos = st.session_state.get("story_cache") or datos_prev
+    if not datos:
+        st.markdown("""
+        <div class="fx-empty">
+          <span class="fx-empty-icon">🎬</span>
+          <div class="fx-empty-text">Pulsa ⚡ Generar para crear el storyboard completo</div>
+          <div class="fx-empty-sub">8 fases · Director Creativo Senior · 10 ángulos · Veo/Kling · Meta A/B/C</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    _mostrar_storyboard(datos)
+
+
+def _mostrar_storyboard(datos: dict):
+    ma = datos["mejor_angulo"]
+    pot_color = {"alto": "#10b981", "medio": "#f59e0b", "bajo": "#ef4444"}.get(
+        ma["potencial"], "#a78bfa")
+
+    # ── Mejor ángulo ──────────────────────────────────────────────────────────
+    st.markdown('<span class="fx-section-label">Ángulo seleccionado</span>', unsafe_allow_html=True)
+    c_ang, c_razon = st.columns([1, 2], gap="large")
+    with c_ang:
+        st.markdown(f"""
+        <div class="fx-stat">
+          <div style="font-size:0.65rem;font-weight:700;color:#3a3a5a;letter-spacing:0.1em;text-transform:uppercase">
+            Ángulo #{ma['numero']}
+          </div>
+          <div style="font-size:1.6rem;font-weight:900;color:{pot_color};letter-spacing:-0.03em;margin:0.5rem 0">
+            {ma['nombre']}
+          </div>
+          <span style="background:rgba(16,185,129,0.1);color:{pot_color};font-size:0.65rem;font-weight:700;
+                       padding:0.2rem 0.7rem;border-radius:20px;letter-spacing:0.08em;text-transform:uppercase">
+            potencial {ma['potencial']}
+          </span>
+        </div>
+        """, unsafe_allow_html=True)
+    with c_razon:
+        st.markdown(f"""
+        <div class="fx-card-flat" style="height:100%">
+          <div style="font-size:0.65rem;font-weight:700;color:#3a3a5a;letter-spacing:0.1em;
+                      text-transform:uppercase;margin-bottom:0.6rem">Por qué este ángulo gana</div>
+          <div style="font-size:0.9rem;color:#c0c0d8;line-height:1.7">{datos['angulo_razon']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div class='fx-divider'></div>", unsafe_allow_html=True)
+
+    # ── 10 ángulos ────────────────────────────────────────────────────────────
+    with st.expander("Ver los 10 ángulos analizados", expanded=False):
+        cols = st.columns(2, gap="medium")
+        for i, ang in enumerate(datos.get("angulos_todos", [])):
+            p = ang["potencial"]
+            pc = {"alto": "#10b981", "medio": "#f59e0b", "bajo": "#ef4444"}.get(p, "#a78bfa")
+            with cols[i % 2]:
+                st.markdown(f"""
+                <div class="fx-card-flat" style="margin-bottom:0.5rem;border-left:3px solid {pc}">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-size:0.88rem;font-weight:700;color:#d0d0e8">
+                      #{ang['numero']} {ang['nombre']}
+                    </span>
+                    <span style="font-size:0.65rem;font-weight:700;color:{pc};letter-spacing:0.08em;
+                                 text-transform:uppercase">{p}</span>
+                  </div>
+                  <div style="font-size:0.78rem;color:#4a4a6a;margin-top:0.3rem">{ang['descripcion']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── Storyboard table ──────────────────────────────────────────────────────
+    st.markdown('<span class="fx-section-label">Storyboard — 7 escenas</span>', unsafe_allow_html=True)
+    obj_colors = {
+        "HOOK": "#7c3aed", "PROBLEMA": "#ef4444", "AGITACIÓN": "#f59e0b",
+        "SOLUCIÓN": "#10b981", "DEMO": "#60a5fa", "BENEFICIOS": "#a78bfa", "CTA": "#f472b6",
+    }
+    for c in datos.get("cuadros", []):
+        oc = obj_colors.get(c["objetivo"], "#7c3aed")
+        st.markdown(f"""
+        <div class="fx-scene">
+          <div class="fx-scene-header">
+            <span class="fx-scene-time">{c['tiempo']}</span>
+            <span style="font-size:0.68rem;font-weight:700;letter-spacing:0.1em;
+                         color:{oc};text-transform:uppercase;background:rgba(124,58,237,0.08);
+                         padding:0.15rem 0.5rem;border-radius:6px">{c['objetivo']}</span>
+          </div>
+          <div class="fx-scene-key">👁 Visual</div>
+          <div class="fx-scene-val">{c['visual']}</div>
+          <div class="fx-scene-key">🎙 Texto / Caption</div>
+          <div class="fx-scene-val-em">"{c['texto']}"</div>
+          <div class="fx-scene-key">🎬 Descripción del cuadro</div>
+          <div class="fx-scene-val" style="color:#3a3a5a;font-size:0.82rem">{c['descripcion_cuadro']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div class='fx-divider'></div>", unsafe_allow_html=True)
+
+    # ── Prompts ────────────────────────────────────────────────────────────────
+    col_img, col_veo = st.columns(2, gap="large")
+    with col_img:
+        st.markdown('<span class="fx-section-label">Prompt — Imagen storyboard</span>', unsafe_allow_html=True)
+        st.text_area("pi", value=datos.get("prompt_imagen", ""), height=140,
+                     label_visibility="collapsed", key="_story_prompt_img")
+    with col_veo:
+        st.markdown('<span class="fx-section-label">Prompt — Veo / Gemini / Kling</span>', unsafe_allow_html=True)
+        st.text_area("pv", value=datos.get("prompt_veo", ""), height=140,
+                     label_visibility="collapsed", key="_story_prompt_veo")
+
+    st.markdown("<div class='fx-divider'></div>", unsafe_allow_html=True)
+
+    # ── Copies Meta A/B/C ─────────────────────────────────────────────────────
+    st.markdown('<span class="fx-section-label">Copy Meta Ads — A / B / C</span>', unsafe_allow_html=True)
+    ca, cb, cc = st.columns(3, gap="medium")
+    for col, label, key_sfx, val in [
+        (ca, "Copy A", "a", datos.get("copy_a", "")),
+        (cb, "Copy B", "b", datos.get("copy_b", "")),
+        (cc, "Copy C", "c", datos.get("copy_c", "")),
+    ]:
+        with col:
+            st.markdown(f"<div style='font-size:0.72rem;font-weight:700;color:#2a2a42;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.4rem'>{label}</div>", unsafe_allow_html=True)
+            st.text_area(label, value=val, height=200,
+                         key=f"_copy_{key_sfx}", label_visibility="collapsed")
+
+    c_t, c_d, c_c = st.columns(3, gap="medium")
+    with c_t:
+        st.markdown("<div style='font-size:0.72rem;font-weight:700;color:#2a2a42;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.4rem'>Título</div>", unsafe_allow_html=True)
+        st.text_input("tit", value=datos.get("titulo_meta", ""), label_visibility="collapsed", key="_meta_titulo")
+    with c_d:
+        st.markdown("<div style='font-size:0.72rem;font-weight:700;color:#2a2a42;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.4rem'>Descripción</div>", unsafe_allow_html=True)
+        st.text_input("des", value=datos.get("descripcion_meta", ""), label_visibility="collapsed", key="_meta_desc")
+    with c_c:
+        st.markdown("<div style='font-size:0.72rem;font-weight:700;color:#2a2a42;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:0.4rem'>CTA</div>", unsafe_allow_html=True)
+        st.text_input("cta", value=datos.get("cta_meta", ""), label_visibility="collapsed", key="_meta_cta")
+
+    tok = datos.get("tokens_entrada", 0)
+    if tok:
+        st.markdown(f"<div style='font-size:0.72rem;color:#1e1e30;margin-top:0.5rem'>Tokens: {tok:,}↑ {datos.get('tokens_salida',0):,}↓</div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PÁGINA: LANDING SECTIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
+_LANDING_SECCIONES = ["hero", "beneficios", "caracteristicas", "comparativa", "envios"]
+_LANDING_LABELS = {
+    "hero":          "🏆 Hero",
+    "beneficios":    "✅ Beneficios",
+    "caracteristicas": "⚙️ Características",
+    "comparativa":   "📊 Comparativa",
+    "envios":        "📦 Envíos COD",
+}
+
+
 def _pagina_landing():
+    from fluxa.imagegen import generar_imagen, prompt_landing_seccion
+    import anthropic, os
+
     _page_header("📄", "Landing Sections",
-                 "Hero · Beneficios · Características · Comparativa · Envíos — 1080×1600px · gpt-image-2")
+                 "5 secciones · 1080×1600px · gpt-image-1 · Copy CRO Colombia COD")
 
     pid, pnombre = _selector_producto("landing")
     if not pid:
         return
 
-    st.markdown("""
-    <div class="fx-card" style="text-align:center;padding:3rem">
-      <div style="font-size:2rem;margin-bottom:1rem">📄</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;letter-spacing:-0.02em">
-        Landing Sections — en construcción
-      </div>
-      <div style="font-size:0.85rem;color:#3a3a5a;margin-top:0.5rem">
-        Hero · Beneficios · Características · Comparativa · Envíos<br>
-        Imágenes 1080×1600px · gpt-image-2 · Producto nunca se altera
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    hist = [s for s in db.listar(limite=300)
+            if s["producto"] == pnombre and s["modulo"] == "landing"]
+    datos_prev = hist[0]["datos"] if hist else None
+    datos = st.session_state.get(f"landing_cache_{pid}") or datos_prev or {"secciones": {}}
+
+    # ── Controles ─────────────────────────────────────────────────────────────
+    st.markdown('<span class="fx-section-label">Generar sección</span>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([2, 2, 1, 1], gap="small")
+    with c1:
+        seccion_sel = st.selectbox(
+            "Sección", _LANDING_SECCIONES,
+            format_func=lambda x: _LANDING_LABELS[x],
+            label_visibility="collapsed",
+        )
+    with c2:
+        precio = st.text_input("Precio / oferta", placeholder="ej: $89.900 · 2x$140.000",
+                               label_visibility="collapsed")
+    with c3:
+        solo_copy = st.checkbox("Solo copy", value=False)
+    with c4:
+        gen_btn = st.button("⚡ Generar", type="primary")
+
+    if gen_btn:
+        with st.status(f"Generando **{_LANDING_LABELS[seccion_sel]}**…", expanded=True) as status:
+            try:
+                # 1. Claude genera el copy de la sección
+                st.write("✍️ Claude generando copy CRO…")
+                client_ant = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+                copy_prompt = f"""Producto: {pnombre}
+Sección: {seccion_sel}
+Precio/oferta: {precio or 'a definir'}
+
+Genera el copy para la sección '{seccion_sel}' de una landing page de alta conversión para e-commerce COD Colombia.
+Devuelve JSON puro con:
+{{
+  "titulo": "...",
+  "subtitulo": "...",
+  "headline": "...",
+  "puntos": ["...", "...", "...", "...", "..."],
+  "cta": "...",
+  "nota_confianza": "Paga cuando llegue a tu puerta"
+}}
+Estilo: directo, emocional, colombiano. Máx 8 palabras por titular."""
+
+                msg = client_ant.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=800,
+                    messages=[{"role": "user", "content": copy_prompt}],
+                )
+                raw = msg.content[0].text.strip()
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                copy = __import__("json").loads(raw.strip())
+
+                img_bytes = None
+                if not solo_copy:
+                    st.write("🎨 gpt-image-1 generando imagen 1024×1536…")
+                    img_prompt = prompt_landing_seccion(seccion_sel, pnombre, copy)
+                    img_bytes = generar_imagen(img_prompt, modo="portrait")
+                    copy["imagen_b64"] = __import__("base64").b64encode(img_bytes).decode()
+
+                secciones = datos.get("secciones", {})
+                secciones[seccion_sel] = copy
+                datos_g = {**datos, "secciones": secciones}
+
+                for s in hist:
+                    db.eliminar(s["id"])
+                db.guardar(pnombre, "landing", datos_g)
+                status.update(label=f"¡{_LANDING_LABELS[seccion_sel]} lista!", state="complete", expanded=False)
+                st.session_state[f"landing_cache_{pid}"] = datos_g
+                st.rerun()
+            except Exception as e:
+                status.update(label=f"Error: {e}", state="error")
+                st.error(str(e))
+        return
+
+    # ── Mostrar secciones generadas ────────────────────────────────────────────
+    secciones = datos.get("secciones", {})
+    if not secciones:
+        st.markdown("""
+        <div class="fx-empty">
+          <span class="fx-empty-icon">📄</span>
+          <div class="fx-empty-text">Selecciona una sección y pulsa ⚡ Generar</div>
+          <div class="fx-empty-sub">Hero · Beneficios · Características · Comparativa · Envíos</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    for sec_key in _LANDING_SECCIONES:
+        sec = secciones.get(sec_key)
+        if not sec:
+            continue
+        label = _LANDING_LABELS[sec_key]
+        with st.expander(f"{label} — generada", expanded=True):
+            col_copy, col_img = st.columns([1, 1], gap="large")
+            with col_copy:
+                st.markdown(f"""
+                <div class="fx-card-flat">
+                  <div style="font-size:1.1rem;font-weight:800;color:#e8e8f8;
+                              letter-spacing:-0.03em;margin-bottom:0.4rem">
+                    {sec.get('headline') or sec.get('titulo', '')}
+                  </div>
+                  <div style="font-size:0.85rem;color:#4a4a6a;margin-bottom:1rem">
+                    {sec.get('subtitulo', '')}
+                  </div>
+                """, unsafe_allow_html=True)
+                for p in sec.get("puntos", []):
+                    st.markdown(f'<div class="fx-beneficio">✓ {p}</div>', unsafe_allow_html=True)
+                st.markdown(f"""
+                  <div style="margin-top:0.8rem;font-size:0.85rem;font-weight:700;
+                              color:#a78bfa">{sec.get('cta', '')}</div>
+                  <div style="font-size:0.75rem;color:#2a2a42;margin-top:0.3rem">
+                    {sec.get('nota_confianza', '')}
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_img:
+                img_b64 = sec.get("imagen_b64")
+                if img_b64:
+                    st.image(
+                        __import__("base64").b64decode(img_b64),
+                        caption=f"{label} — 1024×1536px",
+                        use_container_width=True,
+                    )
+                    st.download_button(
+                        f"⬇ Descargar {label}",
+                        data=__import__("base64").b64decode(img_b64),
+                        file_name=f"landing_{sec_key}_{pnombre.lower().replace(' ','_')}.png",
+                        mime="image/png",
+                        key=f"_dl_landing_{sec_key}",
+                    )
+                else:
+                    st.markdown("""
+                    <div class="fx-card-flat" style="text-align:center;opacity:0.4;padding:3rem">
+                      Solo copy generado — marca "Sin solo copy" para generar imagen
+                    </div>
+                    """, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -743,25 +1068,97 @@ def _pagina_landing():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _pagina_upsells():
+    from fluxa.imagegen import editar_imagen, generar_imagen, prompt_upsell_x1, prompt_upsell_x2, prompt_upsell_x3
+    import base64
+
     _page_header("🖼️", "Upsells",
-                 "Foto producto → ×1 ×2 ×3 fondo blanco HD · gpt-image-2 · Releasit COD")
+                 "Sube la foto → ×1 ×2 ×3 fondo blanco HD · gpt-image-1 · Releasit COD")
 
     pid, pnombre = _selector_producto("upsells")
     if not pid:
         return
 
-    st.markdown("""
-    <div class="fx-card" style="text-align:center;padding:3rem">
-      <div style="font-size:2rem;margin-bottom:1rem">🖼️</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;letter-spacing:-0.02em">
-        Upsells — en construcción
-      </div>
-      <div style="font-size:0.85rem;color:#3a3a5a;margin-top:0.5rem">
-        Sube la foto del producto → genera combo ×1, ×2, ×3<br>
-        Fondo blanco HD · Sin alterar el producto · Releasit listo
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    hist = [s for s in db.listar(limite=300)
+            if s["producto"] == pnombre and s["modulo"] == "upsells"]
+    datos_prev = hist[0]["datos"] if hist else None
+    datos = st.session_state.get(f"upsell_cache_{pid}") or datos_prev or {}
+
+    st.markdown('<span class="fx-section-label">Imagen del producto</span>', unsafe_allow_html=True)
+    c1, c2 = st.columns([3, 1], gap="small")
+    with c1:
+        foto = st.file_uploader(
+            "Sube la foto del producto (PNG/JPG)",
+            type=["png", "jpg", "jpeg"],
+            label_visibility="collapsed",
+            key=f"_up_foto_{pid}",
+        )
+    with c2:
+        gen_all = st.button("⚡ Generar ×1 ×2 ×3", type="primary", disabled=foto is None)
+
+    if foto:
+        st.image(foto, width=200, caption="Foto original")
+
+    if gen_all and foto:
+        img_bytes = foto.read()
+        with st.status(f"Generando upsells para **{pnombre}**…", expanded=True) as status:
+            try:
+                resultados = {}
+                for variante, prompt_fn, label in [
+                    ("x1", lambda: prompt_upsell_x1(pnombre), "×1 — Mejora HD"),
+                    ("x2", lambda: prompt_upsell_x2(pnombre), "×2 — Dos unidades"),
+                    ("x3", lambda: prompt_upsell_x3(pnombre), "×3 — Tres unidades"),
+                ]:
+                    st.write(f"🖼️ Generando {label}…")
+                    try:
+                        out = editar_imagen(img_bytes, prompt_fn(), modo="square")
+                    except Exception:
+                        out = generar_imagen(prompt_fn(), modo="square")
+                    resultados[variante] = base64.b64encode(out).decode()
+
+                datos_g = {**datos, "upsells": resultados, "producto": pnombre}
+                for s in hist:
+                    db.eliminar(s["id"])
+                db.guardar(pnombre, "upsells", datos_g)
+                status.update(label="¡Upsells listos!", state="complete", expanded=False)
+                st.session_state[f"upsell_cache_{pid}"] = datos_g
+                st.rerun()
+            except Exception as e:
+                status.update(label=f"Error: {e}", state="error")
+                st.error(str(e))
+        return
+
+    upsells = datos.get("upsells", {})
+    if not upsells:
+        st.markdown("""
+        <div class="fx-empty">
+          <span class="fx-empty-icon">🖼️</span>
+          <div class="fx-empty-text">Sube la foto y pulsa ⚡ Generar ×1 ×2 ×3</div>
+          <div class="fx-empty-sub">Fondo blanco HD · Sin alterar el producto · Listo para Releasit</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # Mostrar resultados
+    st.markdown("<div class='fx-divider'></div>", unsafe_allow_html=True)
+    st.markdown('<span class="fx-section-label">Imágenes generadas</span>', unsafe_allow_html=True)
+
+    labels = {"x1": "×1 — Mejora HD", "x2": "×2 — Dos unidades", "x3": "×3 — Tres unidades"}
+    cols = st.columns(3, gap="medium")
+    for col, key in zip(cols, ["x1", "x2", "x3"]):
+        b64 = upsells.get(key)
+        if not b64:
+            continue
+        img_data = base64.b64decode(b64)
+        with col:
+            st.image(img_data, caption=labels[key], use_container_width=True)
+            st.download_button(
+                f"⬇ {labels[key]}",
+                data=img_data,
+                file_name=f"upsell_{key}_{pnombre.lower().replace(' ','_')}.png",
+                mime="image/png",
+                key=f"_dl_up_{key}",
+                use_container_width=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -769,25 +1166,116 @@ def _pagina_upsells():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _pagina_resenas():
+    from fluxa.imagegen import generar_imagen, editar_imagen, prompts_resenas
+    import base64
+
     _page_header("🌟", "Reseñas Visuales",
-                 "Prompts UGC hiperrealistas · Cliente colombiano · 5+ escenas por producto")
+                 "UGC hiperrealista · Cliente colombiano · Celular · 5+ escenas")
 
     pid, pnombre = _selector_producto("resenas")
     if not pid:
         return
 
-    st.markdown("""
-    <div class="fx-card" style="text-align:center;padding:3rem">
-      <div style="font-size:2rem;margin-bottom:1rem">🌟</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#e0e0f0;letter-spacing:-0.02em">
-        Reseñas Visuales — en construcción
-      </div>
-      <div style="font-size:0.85rem;color:#3a3a5a;margin-top:0.5rem">
-        5+ prompts UGC · Foto llegó · En mano · En uso · WhatsApp · Unboxing<br>
-        Estilo cliente colombiano real · Ambiente cotidiano · Sin apariencia de IA
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    hist = [s for s in db.listar(limite=300)
+            if s["producto"] == pnombre and s["modulo"] == "resenas"]
+    datos_prev = hist[0]["datos"] if hist else None
+    datos = st.session_state.get(f"resenas_cache_{pid}") or datos_prev or {}
+
+    # ── Controles ─────────────────────────────────────────────────────────────
+    st.markdown('<span class="fx-section-label">Configuración</span>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([2, 2, 1], gap="small")
+    with c1:
+        publico = st.text_input("Público objetivo", value="mujeres colombianas 25-45 años",
+                                label_visibility="collapsed")
+    with c2:
+        foto_ref = st.file_uploader("Foto producto (opcional, mejora fidelidad)",
+                                    type=["png", "jpg", "jpeg"],
+                                    label_visibility="collapsed",
+                                    key=f"_res_foto_{pid}")
+    with c3:
+        gen_btn = st.button("⚡ Generar", type="primary")
+
+    # Generar prompts + imágenes
+    if gen_btn:
+        with st.status(f"Creando reseñas visuales para **{pnombre}**…", expanded=True) as status:
+            try:
+                prompts_lista = prompts_resenas(pnombre, publico)
+                img_ref = foto_ref.read() if foto_ref else None
+
+                resultados = []
+                for i, p_data in enumerate(prompts_lista, 1):
+                    st.write(f"📸 Generando reseña {i}/5: {p_data['titulo']}…")
+                    try:
+                        if img_ref:
+                            out = editar_imagen(img_ref, p_data["prompt"], modo="square")
+                        else:
+                            out = generar_imagen(p_data["prompt"], modo="square")
+                        p_data["imagen_b64"] = base64.b64encode(out).decode()
+                    except Exception as e_img:
+                        p_data["error"] = str(e_img)
+                    resultados.append(p_data)
+
+                datos_g = {**datos, "resenas": resultados, "producto": pnombre, "publico": publico}
+                for s in hist:
+                    db.eliminar(s["id"])
+                db.guardar(pnombre, "resenas", datos_g)
+                status.update(label="¡Reseñas listas!", state="complete", expanded=False)
+                st.session_state[f"resenas_cache_{pid}"] = datos_g
+                st.rerun()
+            except Exception as e:
+                status.update(label=f"Error: {e}", state="error")
+                st.error(str(e))
+        return
+
+    resenas = datos.get("resenas", [])
+    if not resenas:
+        st.markdown("""
+        <div class="fx-empty">
+          <span class="fx-empty-icon">🌟</span>
+          <div class="fx-empty-text">Pulsa ⚡ Generar para crear 5 reseñas visuales UGC</div>
+          <div class="fx-empty-sub">Foto llegó · En mano · En uso real · WhatsApp · Unboxing</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # ── Mostrar reseñas ────────────────────────────────────────────────────────
+    st.markdown("<div class='fx-divider'></div>", unsafe_allow_html=True)
+
+    # Tab de prompts
+    tab_imgs, tab_prompts = st.tabs(["📸 Imágenes", "📋 Prompts"])
+
+    with tab_imgs:
+        cols_r = st.columns(3, gap="medium")
+        for i, r in enumerate(resenas):
+            with cols_r[i % 3]:
+                b64 = r.get("imagen_b64")
+                if b64:
+                    st.image(base64.b64decode(b64), caption=r["titulo"], use_container_width=True)
+                    st.download_button(
+                        f"⬇ {r['titulo']}",
+                        data=base64.b64decode(b64),
+                        file_name=f"resena_{i+1}_{pnombre.lower().replace(' ','_')}.png",
+                        mime="image/png",
+                        key=f"_dl_res_{i}",
+                        use_container_width=True,
+                    )
+                elif r.get("error"):
+                    st.markdown(f'<div class="fx-riesgo">⚠ {r["titulo"]}: {r["error"]}</div>',
+                                unsafe_allow_html=True)
+
+    with tab_prompts:
+        for i, r in enumerate(resenas):
+            st.markdown(f"""
+            <div class="fx-card-flat" style="margin-bottom:0.8rem">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+                <span style="font-size:0.88rem;font-weight:700;color:#d0d0e8">{r['titulo']}</span>
+                <span style="font-size:0.65rem;color:#3a3a5a">{r.get('recomendado','')}</span>
+              </div>
+              <div style="font-size:0.72rem;color:#2a2a42;margin-bottom:0.3rem">{r.get('objetivo','')}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.text_area(f"p{i}", value=r["prompt"], height=80,
+                         key=f"_res_prompt_{i}", label_visibility="collapsed")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
