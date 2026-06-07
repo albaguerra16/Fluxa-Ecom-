@@ -693,7 +693,7 @@ def _pagina_copy():
         b_cls, b_ico = styles.ANGULO_BADGE.get(tipo, ("fx-badge-purple", "🎯"))
         border = styles.ANGULO_BORDER.get(tipo, "#a78bfa")
 
-        with st.expander(f"{b_ico} {tipo} — {ang['titulo']}", expanded=False):
+        with st.expander(f"{tipo} — {ang['titulo']}", expanded=False):
             cl, cr = st.columns(2, gap="large")
             with cl:
                 st.markdown(f"""
