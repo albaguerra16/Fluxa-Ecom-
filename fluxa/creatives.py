@@ -184,8 +184,16 @@ Reglas:
 
 def generar_creatives(producto: str) -> CreativosResultado:
     import anthropic
+    import httpx
 
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY no está configurada en las variables de entorno")
+
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        timeout=httpx.Timeout(120.0, connect=15.0),
+    )
 
     msg = client.messages.create(
         model="claude-sonnet-4-6",

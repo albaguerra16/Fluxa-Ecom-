@@ -237,7 +237,7 @@ def _pagina_productos():
             emoji_n = st.text_input("Emoji", value="📦", max_chars=2,
                                     label_visibility="collapsed")
         with c2:
-            nombre_n = st.text_input("Nombre", placeholder="ej: faja moldeadora...",
+            nombre_n = st.text_input("Nombre del producto", placeholder="ej: humidificador portátil para carro",
                                      label_visibility="collapsed")
         with c3:
             if st.button("Crear", type="primary", disabled=not nombre_n.strip()):
@@ -247,6 +247,13 @@ def _pagina_productos():
                 st.session_state.pid = pid
                 st.session_state.pnombre = nombre_n.strip()
                 _ir("copy")
+
+        detalles_n = st.text_area(
+            "Detalles del producto (opcional)",
+            placeholder="ej: viene en 3 colores (negro, blanco, rosado), incluye cable USB-C, recargable, garantía 6 meses, tallas XS-4XL…",
+            height=80,
+            label_visibility="collapsed",
+        )
 
         if st.button("Cancelar", key="_cancel_nuevo"):
             st.session_state.mostrar_nuevo = False
@@ -582,17 +589,29 @@ def _pagina_copy():
             if s["producto"] == pnombre and s["modulo"] == "creatives"]
     datos_prev = hist[0]["datos"] if hist else None
 
-    c1, c2 = st.columns([3, 1], gap="small")
+    # Diagnóstico rápido de la key
+    _ant_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if _ant_key:
+        st.markdown(f"<div style='font-size:0.7rem;color:#2a2a42;margin-bottom:0.5rem'>API key: {_ant_key[:12]}…✓</div>", unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ ANTHROPIC_API_KEY no encontrada — usa Modo demo o agrégala en Railway Variables")
+
+    c1, c2, c3 = st.columns([2, 2, 1], gap="small")
     with c1:
-        demo = st.checkbox("Modo demo (sin API)", value=False)
+        demo = st.checkbox("Modo demo (sin API)", value=not bool(_ant_key))
     with c2:
+        contexto_extra = st.text_input("Detalles del producto (colores, incluye USB, tallas…)",
+                                       placeholder="ej: viene en 3 colores, incluye cable USB, tallas S-XL",
+                                       label_visibility="collapsed")
+    with c3:
         gen_btn = st.button("⚡ Generar", type="primary")
 
     if gen_btn:
         with st.status(f"Generando copy para **{pnombre}**…", expanded=True) as status:
             st.write("🎯 Creando 5 ángulos de venta…")
             try:
-                res = generar_creatives_demo(pnombre) if demo else generar_creatives(pnombre)
+                producto_con_ctx = f"{pnombre}. Detalles: {contexto_extra}" if contexto_extra.strip() else pnombre
+                res = generar_creatives_demo(producto_con_ctx) if demo else generar_creatives(producto_con_ctx)
                 datos_g = {
                     "producto": res.producto,
                     "marcas": [{"nombre": m.nombre, "razon": m.razon, "slogan": m.slogan}
