@@ -221,7 +221,7 @@ def _llamar_claude(system: str, user: str, max_tokens: int = 4096) -> tuple[str,
 
 
 def generar_creatives(producto: str) -> CreativosResultado:
-    raw, tok_in, tok_out = _llamar_claude(_SYSTEM, _USER_PROMPT.format(producto=producto))
+    raw, tok_in, tok_out = _llamar_claude(_SYSTEM, _USER_PROMPT.format(producto=producto), max_tokens=8192)
     raw = raw.strip()
 
     # Limpiar posible markdown code fence

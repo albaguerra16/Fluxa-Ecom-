@@ -22,9 +22,14 @@ footer, #MainMenu, [data-testid="stToolbar"],
 
 /* Ocultar keyboard shortcut overlay y tooltips de Streamlit */
 [data-testid="InputInstructions"],
+[data-testid="stTextInputRootElement"] + div,
 div[class*="keyboard"], div[class*="Keyboard"],
 div[class*="shortcut"], div[class*="Shortcut"],
-div[class*="tooltip"]:not(.stTooltipIcon) { display: none !important; }
+div[class*="tooltip"]:not(.stTooltipIcon),
+div[class*="instructions"], div[class*="Instructions"] { display: none !important; }
+
+/* Ocultar el overlay keyboard_doub que aparece arriba */
+body > div[data-baseweb] > div:first-child:not([data-testid]) { display: none !important; }
 
 /* Botón de expandir sidebar — siempre visible */
 [data-testid="collapsedControl"] {
