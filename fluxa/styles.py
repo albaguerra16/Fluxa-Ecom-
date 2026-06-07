@@ -17,7 +17,18 @@ html, body, [data-testid="stAppViewContainer"],
 
 /* ── Ocultar elementos Streamlit ──────────────────────────────────────────── */
 footer, #MainMenu, [data-testid="stToolbar"],
-[data-testid="stDecoration"], header { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+
+/* Ocultar solo el branding del header, NO el botón de sidebar */
+header [data-testid="stAppViewBlockContainer"],
+[data-testid="stHeader"] { display: none !important; }
+
+/* Botón de expandir sidebar — siempre visible */
+[data-testid="collapsedControl"] {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
@@ -25,6 +36,12 @@ footer, #MainMenu, [data-testid="stToolbar"],
   border-right: 1px solid #111120 !important;
   min-width: 230px !important;
   max-width: 230px !important;
+  display: block !important;
+  visibility: visible !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] {
+  min-width: 0 !important;
+  max-width: 0 !important;
 }
 [data-testid="stSidebar"] > div:first-child {
   padding: 0 !important;
