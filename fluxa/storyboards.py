@@ -131,22 +131,41 @@ Sigue exactamente las 8 fases del proceso y devuelve JSON puro sin markdown:
 }}"""
 
 
+def _llamar_claude(system: str, user: str, max_tokens: int = 6000) -> tuple[str, int, int]:
+    import httpx
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY no está configurada en Railway Variables")
+
+    payload = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    with httpx.Client(timeout=httpx.Timeout(120.0, connect=20.0)) as client:
+        resp = client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+
+    if resp.status_code == 401:
+        raise ValueError("ANTHROPIC_API_KEY inválida o expirada")
+    if resp.status_code != 200:
+        raise ValueError(f"Anthropic error {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    usage = data.get("usage", {})
+    return data["content"][0]["text"], usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+
+
 def generar_storyboard(producto: str, contexto: str = "") -> StoryboardCompleto:
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
     ctx_str = f"\nContexto adicional: {contexto}" if contexto else ""
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=6000,
-        system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": _PROMPT.format(
-            producto=producto, contexto=ctx_str
-        )}],
-    )
-
-    raw = msg.content[0].text.strip()
+    raw, tok_in, tok_out = _llamar_claude(_SYSTEM, _PROMPT.format(producto=producto, contexto=ctx_str))
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -200,8 +219,8 @@ def generar_storyboard(producto: str, contexto: str = "") -> StoryboardCompleto:
         titulo_meta=c["titulo"],
         descripcion_meta=c["descripcion"],
         cta_meta=c["cta"],
-        tokens_entrada=msg.usage.input_tokens,
-        tokens_salida=msg.usage.output_tokens,
+        tokens_entrada=tok_in,
+        tokens_salida=tok_out,
     )
 
 

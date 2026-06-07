@@ -182,33 +182,47 @@ Reglas:
 
 # ── Generador ────────────────────────────────────────────────────────────────
 
-def generar_creatives(producto: str) -> CreativosResultado:
-    import anthropic
+def _llamar_claude(system: str, user: str, max_tokens: int = 4096) -> tuple[str, int, int]:
+    """Llama a Anthropic via HTTP directo (sin SDK). Retorna (texto, tokens_in, tokens_out)."""
     import httpx
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY no está configurada en las variables de entorno")
+        raise ValueError("ANTHROPIC_API_KEY no está configurada en Railway Variables")
 
-    client = anthropic.Anthropic(
-        api_key=api_key,
-        timeout=httpx.Timeout(120.0, connect=15.0),
-    )
+    payload = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        system=[
-            {
-                "type": "text",
-                "text": _SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": _USER_PROMPT.format(producto=producto)}],
-    )
+    with httpx.Client(timeout=httpx.Timeout(120.0, connect=20.0), verify=True) as client:
+        resp = client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+        )
 
-    raw = msg.content[0].text.strip()
+    if resp.status_code == 401:
+        raise ValueError("ANTHROPIC_API_KEY inválida o expirada. Verifica en console.anthropic.com")
+    if resp.status_code != 200:
+        raise ValueError(f"Anthropic respondió {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    text = data["content"][0]["text"]
+    usage = data.get("usage", {})
+    return text, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+
+
+def generar_creatives(producto: str) -> CreativosResultado:
+    raw, tok_in, tok_out = _llamar_claude(_SYSTEM, _USER_PROMPT.format(producto=producto))
+    raw = raw.strip()
 
     # Limpiar posible markdown code fence
     if raw.startswith("```"):
@@ -251,8 +265,8 @@ def generar_creatives(producto: str) -> CreativosResultado:
         problemas=problemas,
         beneficios=beneficios,
         angulos=angulos,
-        tokens_entrada=msg.usage.input_tokens,
-        tokens_salida=msg.usage.output_tokens,
+        tokens_entrada=tok_in,
+        tokens_salida=tok_out,
     )
 
 
