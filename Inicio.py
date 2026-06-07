@@ -89,20 +89,6 @@ with st.sidebar:
 
     pg = st.session_state.pagina
 
-    # Inyectar estilos activos una sola vez para todos los nav items
-    active_css = ""
-    for key in _NAV_LABELS:
-        if key == pg:
-            active_css += f"""
-            div[data-testid="stSidebar"] div[data-testid="stButton"]:has(button[key="_nav_{key}"]) button,
-            div[data-testid="stSidebar"] div.stButton:nth-of-type({list(_NAV_LABELS.keys()).index(key)+1}) button {{
-                background: #13132a !important;
-                color: #a78bfa !important;
-                font-weight: 600 !important;
-            }}"""
-    if active_css:
-        st.markdown(f"<style>{active_css}</style>", unsafe_allow_html=True)
-
     for group_label, keys in _NAV_GROUPS:
         if group_label:
             st.markdown(f"""
@@ -114,19 +100,11 @@ with st.sidebar:
         for key in keys:
             label = _NAV_LABELS[key]
             is_active = pg == key
-            if is_active:
-                st.markdown(f"""
-                <style>
-                div[data-testid="stSidebar"] div[data-testid="stButton"]:has(button[data-testid="stButton"]) + div button {{
-                  background: #13132a !important; color: #a78bfa !important;
-                }}
-                </style>
-                """, unsafe_allow_html=True)
             if st.sidebar.button(
-                ("▌ " if is_active else "  ") + label,
+                label,
                 key=f"_nav_{key}",
                 use_container_width=True,
-                type="secondary",
+                type="primary" if is_active else "secondary",
             ):
                 st.session_state.pagina = key
                 st.rerun()
@@ -322,36 +300,74 @@ def _pagina_validacion():
         with st.status(f"Analizando **{pnombre}**…", expanded=True) as status:
             try:
                 if demo:
-                    ml_d  = {"total_productos": 1500, "num_marcas": 22, "dominios": []}
-                    tr_d  = {"interes_promedio": 55.0, "interes_peak": 100, "tendencia": 0.8}
-                    meta_d = {"num_anuncios": 12}
-                    mkt_d  = {"num_publicaciones": 18}
+                    # Demo 100% offline — sin llamadas a APIs
+                    kw = pnombre.split()[0].capitalize()
+                    datos_g = {
+                        "keyword": pnombre,
+                        "score_total": 13, "score_pct": 72.2, "veredicto": "✅ LANZAR",
+                        "aprobados": 6, "en_riesgo": 2, "reprobados": 1,
+                        "criterios": [
+                            {"numero": 1, "nombre": "Saturación", "estado": "✅", "nota": f"Mercado activo pero no saturado para {pnombre}. Meta Ads muestra ~12 anuncios activos en Colombia.", "puntos": 2},
+                            {"numero": 2, "nombre": "Stock y proveedores", "estado": "✅", "nota": "Alibaba muestra 50+ proveedores con MOQ bajo (10-50 unidades). FOB estimado $3-8 USD.", "puntos": 2},
+                            {"numero": 3, "nombre": "Catálogo público", "estado": "⚠️", "nota": "No encontrado en Dollar City ni D1, pero sí en Ara a precio similar. Oportunidad de diferenciación.", "puntos": 1},
+                            {"numero": 4, "nombre": "Oportunidad importación", "estado": "✅", "nota": f"Amazon USA vende {pnombre} a $25-40 USD. Margen de importación viable para Colombia.", "puntos": 2},
+                            {"numero": 5, "nombre": "Ticket COP", "estado": "✅", "nota": "Precio sugerido $79.900-$99.900 COP. Dentro del rango óptimo COD ($50k-$400k).", "puntos": 2},
+                            {"numero": 6, "nombre": "Compra por impulso", "estado": "✅", "nota": "Producto visual, fácil de entender, resuelve problema cotidiano. Alto potencial de compra impulsiva.", "puntos": 2},
+                            {"numero": 7, "nombre": "Anuncio cautivador", "estado": "⚠️", "nota": "TikTok muestra videos de unboxing con buen engagement. Necesita ángulo diferenciador fuerte.", "puntos": 1},
+                            {"numero": 8, "nombre": "Percepción de valor", "estado": "✅", "nota": "Percepción de calidad premium posible con buen empaque y fotografía profesional.", "puntos": 2},
+                            {"numero": 9, "nombre": "Producto black", "estado": "❌", "nota": "Sin restricciones detectadas en políticas de Meta o TikTok. Apto para publicidad.", "puntos": 0},
+                        ],
+                        "angulos_venta": [
+                            {"nombre": "Validación Social", "hook": f"¿Ya viste el {pnombre} que está arrasando en Colombia?", "copy": f"Más de 3.000 pedidos entregados este mes. Paga cuando llegue a tu puerta."},
+                            {"nombre": "Problema-Solución", "hook": f"Llevas meses buscando {pnombre} y no encuentras nada bueno", "copy": f"Este {pnombre} resuelve exactamente ese problema. Envío gratis, pago contra entrega."},
+                            {"nombre": "Antes/Después", "hook": f"Así era mi vida antes del {pnombre}... y así es ahora", "copy": f"El cambio es real. Miles de colombianos ya lo vivieron. Tú puedes ser el próximo."},
+                        ],
+                        "marca": {
+                            "nombre": f"{kw}Pro™", "razon": "Transmite calidad y profesionalismo en el mercado colombiano",
+                            "copy_anuncio": f"¿Buscabas {pnombre} de calidad sin pagar de más? {kw}Pro™ llegó a Colombia. Pide hoy, paga cuando te llegue. Sin riesgo. Sin tarjeta. Solo resultados.",
+                            "valor_agregado": "Empaque premium con garantía de satisfacción incluida",
+                            "empaque": "Caja con logo UV, papel de seda, tarjeta de garantía, instrucciones en español",
+                        },
+                        "riesgos": [
+                            "Validar proveedores antes de hacer inventario grande (mínimo 20 unidades prueba)",
+                            "Fotografía profesional es clave — el producto se percibe por las imágenes",
+                            "Competencia puede activarse rápido si el producto despega — muévete en los primeros 30 días",
+                        ],
+                        "tokens_entrada": 0, "tokens_salida": 0,
+                    }
+                    for s in hist:
+                        db.eliminar(s["id"])
+                    db.guardar(pnombre, "analisis", datos_g)
+                    status.update(label="¡Análisis demo listo!", state="complete", expanded=False)
+                    st.session_state["analisis_cache"] = datos_g
+                    st.rerun()
+
+                # ── Modo real ────────────────────────────────────────────────
+                if usar_tri:
+                    from trendia.triangulator.mercadolibre import buscar
+                    from trendia.triangulator.trends import interes_colombia
+                    from trendia.triangulator.meta_ads import _scrape_async as _ma
+                    from trendia.triangulator.fb_marketplace import _scrape_async as _fm
+
+                    st.write("📊 MercadoLibre…")
+                    ml_r = buscar(pnombre)
+                    ml_d = {"total_productos": ml_r.total_productos,
+                            "num_marcas": ml_r.num_marcas, "dominios": ml_r.dominios}
+
+                    st.write("📈 Google Trends…")
+                    tr_r = interes_colombia(pnombre)
+                    tr_d = {"interes_promedio": tr_r.interes_promedio,
+                            "interes_peak": tr_r.interes_peak, "tendencia": tr_r.tendencia}
+
+                    st.write("📱 Meta Ads + Marketplace…")
+                    meta_r, mkt_r = asyncio.run(asyncio.gather(_ma(pnombre), _fm(pnombre)))
+                    meta_d = {"num_anuncios": meta_r.num_anuncios}
+                    mkt_d  = {"num_publicaciones": mkt_r.num_publicaciones}
                 else:
-                    if usar_tri:
-                        from trendia.triangulator.mercadolibre import buscar
-                        from trendia.triangulator.trends import interes_colombia
-                        from trendia.triangulator.meta_ads import _scrape_async as _ma
-                        from trendia.triangulator.fb_marketplace import _scrape_async as _fm
-
-                        st.write("📊 MercadoLibre…")
-                        ml_r = buscar(pnombre)
-                        ml_d = {"total_productos": ml_r.total_productos,
-                                "num_marcas": ml_r.num_marcas, "dominios": ml_r.dominios}
-
-                        st.write("📈 Google Trends…")
-                        tr_r = interes_colombia(pnombre)
-                        tr_d = {"interes_promedio": tr_r.interes_promedio,
-                                "interes_peak": tr_r.interes_peak, "tendencia": tr_r.tendencia}
-
-                        st.write("📱 Meta Ads + Marketplace…")
-                        meta_r, mkt_r = asyncio.run(asyncio.gather(_ma(pnombre), _fm(pnombre)))
-                        meta_d = {"num_anuncios": meta_r.num_anuncios}
-                        mkt_d  = {"num_publicaciones": mkt_r.num_publicaciones}
-                    else:
-                        ml_d  = {"total_productos": 0, "num_marcas": 0, "dominios": []}
-                        tr_d  = {"interes_promedio": 0, "interes_peak": 0, "tendencia": 0}
-                        meta_d = {"num_anuncios": 0}
-                        mkt_d  = {"num_publicaciones": 0}
+                    ml_d  = {"total_productos": 0, "num_marcas": 0, "dominios": []}
+                    tr_d  = {"interes_promedio": 0, "interes_peak": 0, "tendencia": 0}
+                    meta_d = {"num_anuncios": 0}
+                    mkt_d  = {"num_publicaciones": 0}
 
                 st.write("🤖 Claude — 9 criterios + buyer persona…")
                 from trendia.analyzer.motor import analizar as _analizar

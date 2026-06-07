@@ -17,17 +17,21 @@ html, body, [data-testid="stAppViewContainer"],
 
 /* ── Ocultar elementos Streamlit ──────────────────────────────────────────── */
 footer, #MainMenu, [data-testid="stToolbar"],
-[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stDecoration"], [data-testid="stHeader"],
+[data-testid="stStatusWidget"] { display: none !important; }
 
-/* Ocultar solo el branding del header, NO el botón de sidebar */
-header [data-testid="stAppViewBlockContainer"],
-[data-testid="stHeader"] { display: none !important; }
+/* Ocultar keyboard shortcut overlay y tooltips de Streamlit */
+[data-testid="InputInstructions"],
+div[class*="keyboard"], div[class*="Keyboard"],
+div[class*="shortcut"], div[class*="Shortcut"],
+div[class*="tooltip"]:not(.stTooltipIcon) { display: none !important; }
 
 /* Botón de expandir sidebar — siempre visible */
 [data-testid="collapsedControl"] {
   display: flex !important;
   visibility: visible !important;
   opacity: 1 !important;
+  z-index: 999 !important;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
@@ -71,11 +75,22 @@ header [data-testid="stAppViewBlockContainer"],
   outline: none !important;
 }
 
-/* Sidebar nav item activo */
-[data-testid="stSidebar"] .stButton > button[data-active="true"] {
+/* Sidebar nav item activo — override del botón primary para el sidebar */
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
   background: #13132a !important;
+  border: none !important;
+  border-radius: 10px !important;
   color: #a78bfa !important;
   font-weight: 600 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  padding: 0.55rem 1rem !important;
+  font-size: 0.875rem !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  background: #1a1a35 !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
 /* ── Tipografía ───────────────────────────────────────────────────────────── */
